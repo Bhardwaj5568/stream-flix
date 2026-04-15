@@ -40,16 +40,17 @@ jobs:
             exit 1
           fi
       
-      - name: Create ZIP
+      - name: Create package
         run: |
           VERSION=${{ needs.build.outputs.version }}
-          zip -r streamflix-$VERSION.zip StreamFlix-build/
+          mkdir -p dist
+          tar -czf dist/streamflix-$VERSION.tar.gz StreamFlix-build
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: streamflix-${{ needs.build.outputs.version }}
-          path: streamflix-${{ needs.build.outputs.version }}.zip
+          path: dist/streamflix-${{ needs.build.outputs.version }}.tar.gz
           retention-days: 30
 
   quality:
@@ -88,7 +89,7 @@ jobs:
           tag: v${{ needs.build.outputs.version }}
           name: v${{ needs.build.outputs.version }}
           body: Build ${{ needs.build.outputs.version }} - Ready for deployment
-          artifacts: streamflix-${{ needs.build.outputs.version }}.zip
+          artifacts: streamflix-${{ needs.build.outputs.version }}.tar.gz
           token: ${{ secrets.GITHUB_TOKEN }}
 
   deploy:
@@ -104,8 +105,15 @@ jobs:
       - name: Extract
         shell: powershell
         run: |
-          $zip = Get-ChildItem -Filter "streamflix-*.zip" -First 1
-          Expand-Archive -Path $zip.FullName -DestinationPath "$env:TEMP\deploy"
+          $archive = Get-ChildItem -Path . -Recurse -Filter "streamflix-*.tar.gz" | Select-Object -First 1
+          if (-not $archive) {
+            Write-Host "Archive not found"
+            exit 1
+          }
+          $deployRoot = Join-Path $env:TEMP "deploy"
+          if (Test-Path $deployRoot) { Remove-Item $deployRoot -Recurse -Force }
+          New-Item -ItemType Directory -Path $deployRoot -Force | Out-Null
+          tar -xzf $archive.FullName -C $deployRoot
       
       - name: Backup
         shell: powershell
