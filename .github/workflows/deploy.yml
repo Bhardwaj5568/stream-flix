@@ -82,7 +82,8 @@ jobs:
           allowUpdates: true
 
   deploy:
-    name: Deploy to IIS
+    name: Deploy to IIS (Skipped)
+    if: ${{ false }}
     runs-on: [self-hosted, windows]
     needs: [build, release]
     steps:
