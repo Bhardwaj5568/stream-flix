@@ -91,33 +91,4 @@ jobs:
         with:
           name: streamflix-${{ needs.build.outputs.version }}
           path: deploy-artifact
-      - name: Extract archive
-        shell: powershell
-        run: |
-          $archive = Get-ChildItem -Path deploy-artifact -Recurse -Filter "streamflix-*.tar.gz" | Select-Object -First 1
-          if (-not $archive) { throw "Archive not found" }
-          $deployRoot = Join-Path $env:TEMP "streamflix-deploy"
-          if (Test-Path $deployRoot) { Remove-Item $deployRoot -Recurse -Force }
-          New-Item -ItemType Directory -Path $deployRoot -Force | Out-Null
-          tar -xzf $archive.FullName -C $deployRoot
-      - name: Backup current site
-        shell: powershell
-        run: |
-          $wwwroot = "C:\inetpub\wwwroot"
-          if (Test-Path $wwwroot) {
-            if (-not (Test-Path "C:\backups")) { New-Item -ItemType Directory -Path "C:\backups" | Out-Null }
-            $date = Get-Date -Format yyyyMMdd-HHmm
-            Copy-Item -Path $wwwroot -Destination "C:\backups\streamflix-$date" -Recurse -Force
-          }
-      - name: Copy files
-        shell: powershell
-        run: |
-          $source = "$env:TEMP\streamflix-deploy\StreamFlix-build\*"
-          $dest = "C:\inetpub\wwwroot"
-          if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
-          Copy-Item -Path $source -Destination $dest -Recurse -Force
-      - name: Restart IIS app pool
-        shell: powershell
-        run: |
-          Stop-WebAppPool -Name DefaultAppPool -ErrorAction SilentlyContinue
-          Start-WebAppPool -Name DefaultAppPool -ErrorAction SilentlyContinue
+      
