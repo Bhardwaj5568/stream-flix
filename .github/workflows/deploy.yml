@@ -9,6 +9,9 @@ on:
       - 'StreamFlix-build/**'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build
@@ -17,9 +20,10 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
       
       - name: Generate version
+          path: release-artifact
         id: version
         run: |
           VERSION=$(date +%Y.%m.%d.%H%M)
@@ -27,7 +31,7 @@ jobs:
 
   package:
     name: Package
-    runs-on: ubuntu-latest
+          artifacts: release-artifact/streamflix-${{ needs.build.outputs.version }}.tar.gz
     needs: build
     
     steps:
@@ -98,14 +102,15 @@ jobs:
     needs: [build, release]
     
     steps:
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: streamflix-${{ needs.build.outputs.version }}
+          path: deploy-artifact
       
       - name: Extract
         shell: powershell
         run: |
-          $archive = Get-ChildItem -Path . -Recurse -Filter "streamflix-*.tar.gz" | Select-Object -First 1
+          $archive = Get-ChildItem -Path "deploy-artifact" -Recurse -Filter "streamflix-*.tar.gz" | Select-Object -First 1
           if (-not $archive) {
             Write-Host "Archive not found"
             exit 1
