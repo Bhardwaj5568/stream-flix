@@ -1,4 +1,4 @@
-name: 🚀 Build & Deploy Pipeline
+name: Build and Deploy
 
 on:
   push:
@@ -7,353 +7,128 @@ on:
       - main
     paths:
       - 'StreamFlix-build/**'
-  workflow_dispatch:  # Manual trigger button
-
-env:
-  NODE_VERSION: '16'
-  ARTIFACT_NAME: 'streamflix-build'
+  workflow_dispatch:
 
 jobs:
-  # ============================================================================
-  # STEP 1: TRIGGER & CHECKOUT
-  # ============================================================================
-  checkout-and-prepare:
-    name: 📋 Checkout & Prepare
+  build:
+    name: Build
     runs-on: ubuntu-latest
     outputs:
-      build-version: ${{ steps.version.outputs.version }}
-      artifact-path: ${{ steps.prepare.outputs.artifact-path }}
+      version: ${{ steps.version.outputs.version }}
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v3
       
-      - name: Get version info
+      - name: Generate version
         id: version
         run: |
           VERSION=$(date +%Y.%m.%d.%H%M)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "📌 Build Version: $VERSION"
-      
-      - name: Prepare artifacts
-        id: prepare
-        run: |
-          echo "artifact-path=${{ github.workspace }}/StreamFlix-build" >> $GITHUB_OUTPUT
-          echo "✅ Artifacts prepared at: ${{ github.workspace }}/StreamFlix-build"
 
-  # ============================================================================
-  # STEP 2: BUILD & PACKAGE
-  # ============================================================================
-  build-and-package:
-    name: 📦 Build & Package
+  package:
+    name: Package
     runs-on: ubuntu-latest
-    needs: checkout-and-prepare
+    needs: build
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
       
-      - name: Validate build structure
+      - name: Validate build
         run: |
-          echo "🔍 Validating build structure..."
-          
-          if [ ! -d "StreamFlix-build" ]; then
-            echo "❌ StreamFlix-build directory not found!"
+          if [ ! -d "StreamFlix-build" ] || [ ! -f "StreamFlix-build/index.html" ]; then
+            echo "Build validation failed"
             exit 1
           fi
-          
-          if [ ! -f "StreamFlix-build/index.html" ]; then
-            echo "❌ index.html not found!"
-            exit 1
-          fi
-          
-          echo "✅ Build structure is valid"
       
-      - name: List build artifacts
+      - name: Create ZIP
         run: |
-          echo "📁 Build artifacts:"
-          find StreamFlix-build -type f | head -20
-          echo "..."
-          echo "Total files: $(find StreamFlix-build -type f | wc -l)"
+          VERSION=${{ needs.build.outputs.version }}
+          zip -r streamflix-$VERSION.zip StreamFlix-build/
       
-      - name: Create ZIP package
-        run: |
-          cd ${{ github.workspace }}
-          zip -r streamflix-${{ needs.checkout-and-prepare.outputs.build-version }}.zip StreamFlix-build/
-          ls -lh streamflix-*.zip
-          echo "📦 ZIP created successfully"
-      
-      - name: Upload package as artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: ${{ env.ARTIFACT_NAME }}-${{ needs.checkout-and-prepare.outputs.build-version }}
-          path: streamflix-${{ needs.checkout-and-prepare.outputs.build-version }}.zip
+          name: streamflix-${{ needs.build.outputs.version }}
+          path: streamflix-${{ needs.build.outputs.version }}.zip
           retention-days: 30
 
-  # ============================================================================
-  # STEP 3: QUALITY CHECKS
-  # ============================================================================
-  quality-checks:
-    name: ✅ Quality Checks
+  quality:
+    name: Quality Checks
     runs-on: ubuntu-latest
-    needs: checkout-and-prepare
+    needs: build
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
       
-      - name: Validate HTML
+      - name: Validate files
         run: |
-          echo "🔍 Validating HTML files..."
-          
-          HTML_FILES=$(find StreamFlix-build -name "*.html")
-          if [ -z "$HTML_FILES" ]; then
-            echo "❌ No HTML files found!"
+          if [ ! -f "StreamFlix-build/index.html" ] || [ ! -f "StreamFlix-build/manifest.json" ]; then
             exit 1
           fi
           
-          echo "✅ HTML files found: $(echo "$HTML_FILES" | wc -l)"
-          for file in $HTML_FILES; do
-            echo "  - $file"
+          for json in $(find StreamFlix-build -name "*.json"); do
+            python3 -m json.tool "$json" > /dev/null || exit 1
           done
-      
-      - name: Check asset integrity
-        run: |
-          echo "🔍 Checking asset integrity..."
-          
-          # Check if required assets exist
-          required_files=(
-            "StreamFlix-build/index.html"
-            "StreamFlix-build/manifest.json"
-            "StreamFlix-build/favicon.ico"
-          )
-          
-          for file in "${required_files[@]}"; do
-            if [ ! -f "$file" ]; then
-              echo "❌ Missing required file: $file"
-              exit 1
-            fi
-            echo "✅ Found: $file"
-          done
-          
-          echo "✅ All critical assets present"
-      
-      - name: Validate JSON files
-        run: |
-          echo "🔍 Validating JSON files..."
-          
-          for json_file in $(find StreamFlix-build -name "*.json"); do
-            if ! python3 -m json.tool "$json_file" > /dev/null 2>&1; then
-              echo "❌ Invalid JSON: $json_file"
-              exit 1
-            fi
-            echo "✅ Valid JSON: $json_file"
-          done
-      
-      - name: Check file sizes
-        run: |
-          echo "📊 Checking file sizes..."
-          
-          TOTAL_SIZE=$(du -sh StreamFlix-build | cut -f1)
-          echo "📦 Total build size: $TOTAL_SIZE"
-          
-          # Check individual asset sizes
-          echo "📄 Largest files:"
-          find StreamFlix-build -type f -exec ls -lh {} \; | sort -k5 -hr | head -10
 
-  # ============================================================================
-  # STEP 4: RELEASE MANAGEMENT
-  # ============================================================================
-  create-release:
-    name: 🏷️ Create Release
+  release:
+    name: Create Release
     runs-on: ubuntu-latest
-    needs: [checkout-and-prepare, build-and-package, quality-checks]
+    needs: [build, package, quality]
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
       
-      - name: Download artifact
-        uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v3
         with:
-          name: ${{ env.ARTIFACT_NAME }}-${{ needs.checkout-and-prepare.outputs.build-version }}
+          name: streamflix-${{ needs.build.outputs.version }}
       
-      - name: Create GitHub Release
+      - name: Create release
         uses: ncipollo/release-action@v1
         with:
-          tag: v${{ needs.checkout-and-prepare.outputs.build-version }}
-          name: Release v${{ needs.checkout-and-prepare.outputs.build-version }}
-          body: |
-            ## 📺 Stream-Flix Release v${{ needs.checkout-and-prepare.outputs.build-version }}
-            
-            ### 📦 Release Contents
-            - Production-ready build artifacts
-            - All assets and static files
-            - Ready for IIS deployment
-            
-            ### 📋 Build Info
-            - **Build Date**: $(date)
-            - **Commit**: ${{ github.sha }}
-            - **Branch**: ${{ github.ref }}
-            
-            ### 🚀 Deployment Instructions
-            1. Download the ZIP file below
-            2. Extract to `C:\inetpub\wwwroot`
-            3. Restart IIS Manager
-            
-            ### ✅ Quality Checks Passed
-            - ✓ HTML validation
-            - ✓ Asset integrity
-            - ✓ JSON validation
-            - ✓ File size verification
-          artifacts: streamflix-${{ needs.checkout-and-prepare.outputs.build-version }}.zip
+          tag: v${{ needs.build.outputs.version }}
+          name: v${{ needs.build.outputs.version }}
+          body: Build ${{ needs.build.outputs.version }} - Ready for deployment
+          artifacts: streamflix-${{ needs.build.outputs.version }}.zip
           token: ${{ secrets.GITHUB_TOKEN }}
-          draft: false
-          prerelease: false
 
-  # ============================================================================
-  # STEP 5: DEPLOY TO PRODUCTION (IIS)
-  # ============================================================================
-  deploy-to-iis:
-    name: 🚀 Deploy to IIS
+  deploy:
+    name: Deploy to IIS
     runs-on: windows-latest
-    needs: [checkout-and-prepare, create-release]
-    environment:
-      name: production
+    needs: [build, release]
     
     steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v3
         with:
-          name: ${{ env.ARTIFACT_NAME }}-${{ needs.checkout-and-prepare.outputs.build-version }}
+          name: streamflix-${{ needs.build.outputs.version }}
       
-      - name: Extract and prepare files
+      - name: Extract
         shell: powershell
         run: |
-          Write-Host "📦 Extracting artifacts..." -ForegroundColor Green
-          
-          $zipFile = Get-ChildItem -Filter "streamflix-*.zip" | Select-Object -First 1
-          Write-Host "Found ZIP: $($zipFile.Name)"
-          
-          # Extract to temp directory
-          $extractPath = "$env:TEMP\streamflix-deploy"
-          if (Test-Path $extractPath) {
-            Remove-Item $extractPath -Recurse -Force
-          }
-          
-          Expand-Archive -Path $($zipFile.FullName) -DestinationPath $extractPath
-          Write-Host "✅ Extracted to: $extractPath"
-          Get-ChildItem -Path $extractPath -Recurse | Select-Object -First 20 | Format-Table
+          $zip = Get-ChildItem -Filter "streamflix-*.zip" -First 1
+          Expand-Archive -Path $zip.FullName -DestinationPath "$env:TEMP\deploy"
       
-      - name: Backup current deployment
+      - name: Backup
         shell: powershell
         run: |
-          Write-Host "💾 Creating backup..." -ForegroundColor Green
-          
           $wwwroot = "C:\inetpub\wwwroot"
-          $backupPath = "C:\inetpub\backups\streamflix-${{ needs.checkout-and-prepare.outputs.build-version }}"
-          
           if (Test-Path $wwwroot) {
-            if (-not (Test-Path "C:\inetpub\backups")) {
-              New-Item -ItemType Directory -Path "C:\inetpub\backups" -Force | Out-Null
-            }
-            
-            Copy-Item -Path $wwwroot -Destination $backupPath -Recurse -Force
-            Write-Host "✅ Backup created at: $backupPath"
-          } else {
-            Write-Host "⚠️  wwwroot not found, skipping backup"
+            if (-not (Test-Path "C:\backups")) { mkdir "C:\backups" }
+            $date = Get-Date -Format yyyyMMdd-HHmm
+            Copy-Item -Path $wwwroot -Destination "C:\backups\backup-$date" -Recurse -Force
           }
       
-      - name: Deploy to IIS wwwroot
+      - name: Copy files
         shell: powershell
         run: |
-          Write-Host "🚀 Deploying to IIS..." -ForegroundColor Green
+          $source = "$env:TEMP\deploy\StreamFlix-build\*"
+          $dest = "C:\inetpub\wwwroot"
           
-          $extractPath = "$env:TEMP\streamflix-deploy"
-          $buildPath = "$extractPath\StreamFlix-build"
-          $wwwroot = "C:\inetpub\wwwroot"
-          
-          # Stop IIS Application Pool
-          Write-Host "⏸️  Stopping IIS..." -ForegroundColor Yellow
-          try {
-            Stop-WebAppPool -Name "DefaultAppPool" -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 2
-          } catch {
-            Write-Host "⚠️  Could not stop app pool: $_"
-          }
-          
-          # Copy new files
-          if (Test-Path $buildPath) {
-            Copy-Item -Path "$buildPath\*" -Destination $wwwroot -Recurse -Force
-            Write-Host "✅ Files deployed to: $wwwroot"
-          } else {
-            Write-Host "❌ Build path not found: $buildPath"
-            exit 1
-          }
-          
-          # Start IIS Application Pool
-          Write-Host "▶️  Starting IIS..." -ForegroundColor Yellow
-          try {
-            Start-WebAppPool -Name "DefaultAppPool" -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 3
-          } catch {
-            Write-Host "⚠️  Could not start app pool: $_"
-          }
+          if (-not (Test-Path $dest)) { mkdir $dest }
+          Copy-Item -Path $source -Destination $dest -Recurse -Force
       
-      - name: Verify deployment
+      - name: Restart IIS
         shell: powershell
         run: |
-          Write-Host "🔍 Verifying deployment..." -ForegroundColor Green
-          
-          $wwwroot = "C:\inetpub\wwwroot"
-          
-          if (Test-Path "$wwwroot\index.html") {
-            Write-Host "✅ index.html found"
-            (Get-Item "$wwwroot\index.html").LastWriteTime
-          }
-          
-          if (Test-Path "$wwwroot\assets") {
-            $assetCount = @(Get-ChildItem -Path "$wwwroot\assets" -Recurse).Count
-            Write-Host "✅ Assets folder found with $assetCount files"
-          }
-          
-          Write-Host "✅ Deployment verification complete"
-      
-      - name: Health check
-        shell: powershell
-        run: |
-          Write-Host "🏥 Running health checks..." -ForegroundColor Green
-          
-          # Wait for IIS to be ready
+          Stop-WebAppPool -Name "DefaultAppPool" -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 2
-          
-          try {
-            $response = Invoke-WebRequest -Uri "http://localhost" -TimeoutSec 10 -UseBasicParsing
-            if ($response.StatusCode -eq 200) {
-              Write-Host "✅ IIS is responding (HTTP 200)"
-              Write-Host "✅ Deployment successful!"
-            }
-          } catch {
-            Write-Host "⚠️  Could not reach localhost: $_"
-            Write-Host "ℹ️  This may be normal in CI/CD environment"
-          }
-      
-      - name: Summary
-        shell: powershell
-        run: |
-          Write-Host "`n" -ForegroundColor Green
-          Write-Host "═══════════════════════════════════════" -ForegroundColor Green
-          Write-Host "✅ DEPLOYMENT COMPLETE" -ForegroundColor Green
-          Write-Host "═══════════════════════════════════════" -ForegroundColor Green
-          Write-Host ""
-          Write-Host "📊 Deployment Info:" -ForegroundColor Cyan
-          Write-Host "  Version: v${{ needs.checkout-and-prepare.outputs.build-version }}"
-          Write-Host "  Target: C:\inetpub\wwwroot"
-          Write-Host "  URL: http://localhost"
-          Write-Host ""
-          Write-Host "💾 Backup Info:" -ForegroundColor Cyan
-          Write-Host "  Location: C:\inetpub\backups\streamflix-${{ needs.checkout-and-prepare.outputs.build-version }}"
-          Write-Host ""
-          Write-Host "═══════════════════════════════════════" -ForegroundColor Green
+          Start-WebAppPool -Name "DefaultAppPool" -ErrorAction SilentlyContinue
