@@ -17,7 +17,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Generate version
         id: version
@@ -31,7 +31,7 @@ jobs:
     needs: build
     
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Validate build
         run: |
@@ -46,7 +46,7 @@ jobs:
           zip -r streamflix-$VERSION.zip StreamFlix-build/
       
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: streamflix-${{ needs.build.outputs.version }}
           path: streamflix-${{ needs.build.outputs.version }}.zip
