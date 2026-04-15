@@ -6,7 +6,8 @@ on:
       - master
       - main
     paths:
-      - 'StreamFlix-build/**'
+      - StreamFlix-build/**
+      - .github/workflows/deploy.yml
   workflow_dispatch:
 
 permissions:
@@ -18,38 +19,28 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-    
     steps:
-      - uses: actions/download-artifact@v4
-      
+      - uses: actions/checkout@v4
       - name: Generate version
-          path: release-artifact
         id: version
         run: |
-          VERSION=$(date +%Y.%m.%d.%H%M)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          VERSION="$(date +%Y.%m.%d).${{ github.run_number }}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
   package:
     name: Package
-          artifacts: release-artifact/streamflix-${{ needs.build.outputs.version }}.tar.gz
+    runs-on: ubuntu-latest
     needs: build
-    
     steps:
       - uses: actions/checkout@v4
-      
       - name: Validate build
         run: |
-          if [ ! -d "StreamFlix-build" ] || [ ! -f "StreamFlix-build/index.html" ]; then
-            echo "Build validation failed"
-            exit 1
-          fi
-      
-      - name: Create package
+          test -d StreamFlix-build
+          test -f StreamFlix-build/index.html
+      - name: Create archive
         run: |
-          VERSION=${{ needs.build.outputs.version }}
           mkdir -p dist
-          tar -czf dist/streamflix-$VERSION.tar.gz StreamFlix-build
-      
+          tar -czf "dist/streamflix-${{ needs.build.outputs.version }}.tar.gz" StreamFlix-build
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -61,87 +52,71 @@ jobs:
     name: Quality Checks
     runs-on: ubuntu-latest
     needs: build
-    
     steps:
-      - uses: actions/checkout@v3
-      
+      - uses: actions/checkout@v4
       - name: Validate files
         run: |
-          if [ ! -f "StreamFlix-build/index.html" ] || [ ! -f "StreamFlix-build/manifest.json" ]; then
-            exit 1
-          fi
-          
+          test -f StreamFlix-build/index.html
+          test -f StreamFlix-build/manifest.json
           for json in $(find StreamFlix-build -name "*.json"); do
-            python3 -m json.tool "$json" > /dev/null || exit 1
+            python3 -m json.tool "$json" > /dev/null
           done
 
   release:
     name: Create Release
     runs-on: ubuntu-latest
     needs: [build, package, quality]
-    
     steps:
-      - uses: actions/checkout@v3
-      
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: streamflix-${{ needs.build.outputs.version }}
-      
+          path: release-artifact
       - name: Create release
         uses: ncipollo/release-action@v1
         with:
           tag: v${{ needs.build.outputs.version }}
           name: v${{ needs.build.outputs.version }}
-          body: Build ${{ needs.build.outputs.version }} - Ready for deployment
-          artifacts: streamflix-${{ needs.build.outputs.version }}.tar.gz
+          body: Build ${{ needs.build.outputs.version }}
+          artifacts: release-artifact/streamflix-${{ needs.build.outputs.version }}.tar.gz
           token: ${{ secrets.GITHUB_TOKEN }}
+          allowUpdates: true
 
   deploy:
     name: Deploy to IIS
-    runs-on: windows-latest
+    runs-on: [self-hosted, windows]
     needs: [build, release]
-    
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: streamflix-${{ needs.build.outputs.version }}
           path: deploy-artifact
-      
-      - name: Extract
+      - name: Extract archive
         shell: powershell
         run: |
-          $archive = Get-ChildItem -Path "deploy-artifact" -Recurse -Filter "streamflix-*.tar.gz" | Select-Object -First 1
-          if (-not $archive) {
-            Write-Host "Archive not found"
-            exit 1
-          }
-          $deployRoot = Join-Path $env:TEMP "deploy"
+          $archive = Get-ChildItem -Path deploy-artifact -Recurse -Filter "streamflix-*.tar.gz" | Select-Object -First 1
+          if (-not $archive) { throw "Archive not found" }
+          $deployRoot = Join-Path $env:TEMP "streamflix-deploy"
           if (Test-Path $deployRoot) { Remove-Item $deployRoot -Recurse -Force }
           New-Item -ItemType Directory -Path $deployRoot -Force | Out-Null
           tar -xzf $archive.FullName -C $deployRoot
-      
-      - name: Backup
+      - name: Backup current site
         shell: powershell
         run: |
           $wwwroot = "C:\inetpub\wwwroot"
           if (Test-Path $wwwroot) {
-            if (-not (Test-Path "C:\backups")) { mkdir "C:\backups" }
+            if (-not (Test-Path "C:\backups")) { New-Item -ItemType Directory -Path "C:\backups" | Out-Null }
             $date = Get-Date -Format yyyyMMdd-HHmm
-            Copy-Item -Path $wwwroot -Destination "C:\backups\backup-$date" -Recurse -Force
+            Copy-Item -Path $wwwroot -Destination "C:\backups\streamflix-$date" -Recurse -Force
           }
-      
       - name: Copy files
         shell: powershell
         run: |
-          $source = "$env:TEMP\deploy\StreamFlix-build\*"
+          $source = "$env:TEMP\streamflix-deploy\StreamFlix-build\*"
           $dest = "C:\inetpub\wwwroot"
-          
-          if (-not (Test-Path $dest)) { mkdir $dest }
+          if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
           Copy-Item -Path $source -Destination $dest -Recurse -Force
-      
-      - name: Restart IIS
+      - name: Restart IIS app pool
         shell: powershell
         run: |
-          Stop-WebAppPool -Name "DefaultAppPool" -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 2
-          Start-WebAppPool -Name "DefaultAppPool" -ErrorAction SilentlyContinue
+          Stop-WebAppPool -Name DefaultAppPool -ErrorAction SilentlyContinue
+          Start-WebAppPool -Name DefaultAppPool -ErrorAction SilentlyContinue
