@@ -3,8 +3,8 @@ name: Build and Deploy
 on:
   push:
     branches:
-      - master
-      - main
+      - mastertttt
+      - maintttt
     paths:
       - StreamFlix-build/**
       - .github/workflows/deploy.yml
