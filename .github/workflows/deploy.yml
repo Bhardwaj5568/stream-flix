@@ -3,8 +3,8 @@ name: Build and Deploy
 on:
   push:
     branches:
-      - mastertttt
-      - maintttt
+      - master
+      - main
     paths:
       - StreamFlix-build/**
       - .github/workflows/deploy.yml
@@ -37,6 +37,7 @@ jobs:
         run: |
           test -d StreamFlix-build
           test -f StreamFlix-build/index.html
+          exit 1
       - name: Create archive
         run: |
           mkdir -p dist
